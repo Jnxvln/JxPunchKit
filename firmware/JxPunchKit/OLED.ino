@@ -7,22 +7,20 @@ void oledPrintMessage(OledTextData &textData) {
   display.clearDisplay();
   display.setCursor(0, 0);
 
-  if (textData.line1Large)
-    display.setTextSize(2);
-  else
-    display.setTextSize(1);
-
+  display.setTextSize(textData.line1Large ? 2 : 1);
   display.setTextColor(textData.line1Color);
   display.println(textData.line1Text);
 
   if (textData.line2Text != "") {
-    if (textData.line2Large)
-      display.setTextSize(2);
-    else
-      display.setTextSize(1);
-
+    display.setTextSize(textData.line2Large ? 2 : 1);
     display.setTextColor(textData.line2Color);
     display.println(textData.line2Text);
+  }
+
+  if (textData.line3Text != "") {
+    display.setTextSize(textData.line3Large ? 2 : 1);
+    display.setTextColor(textData.line3Color);
+    display.println(textData.line3Text);
   }
 
   display.display();
@@ -33,6 +31,6 @@ void oledPrintMessage(OledTextData &textData) {
 // For custom font size/color, build an OledTextData and call
 // oledPrintMessage() directly instead.
 void showMessage(String line1, String line2) {
-  oledTextData = { line1, line2, true, true, WHITE, WHITE };
+  oledTextData = { line1, line2, "", true, true, false, WHITE, WHITE, WHITE };
   oledPrintMessage(oledTextData);
 }

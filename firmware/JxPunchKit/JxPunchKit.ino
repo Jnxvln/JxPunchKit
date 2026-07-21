@@ -31,6 +31,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <RTClib.h>
 
 // ---- Pin assignments -------------------------------------------------
 #define I2C_SDA 32
@@ -49,6 +50,11 @@
 // ---- Timeclock config -------------------------------------------------
 #define NUM_EMPLOYEES 3
 #define OLED_DELAY_MS 2000
+// UTC offset for local time display, in hours. Update this whenever DST
+// changes or applicable time law changes. Nothing else needs to change.
+// Central Daylight Time (CDT, in effect roughly Mar-Nov) = -5
+// Central Standard Time (CST, in effect roughly Nov-Mar) = -6
+#define UTC_OFFSET_HOURS -5
 
 // Admin card UID, broken into individual bytes for direct comparison
 #define ADMIN_UID_0 0xB4
@@ -58,6 +64,7 @@
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 MFRC522 rfid(SS_PIN, RST_PIN);
+RTC_DS3231 rtc;
 
 // Returns true if the scanned UID matches the admin card
 bool isAdminCard(byte *scannedUid, byte uidLength) {
@@ -77,10 +84,13 @@ struct Employee {
 struct OledTextData {
   String line1Text;     // Line 1 text
   String line2Text;     // Line 2 text
+  String line3Text;     // Line 3 text
   bool line1Large;      // Line 1 large font size
   bool line2Large;      // Line 2 large font size
+  bool line3Large;      // Line 3 large font size
   uint16_t line1Color;  // Line 1 text color
   uint16_t line2Color;  // Line 2 text color
+  uint16_t line3Color;  // Line 3 text color
 };
 
 // NOTE: hardcoded for now, will move to persistent storage once
@@ -92,14 +102,20 @@ Employee employees[NUM_EMPLOYEES] = {
   {{0xB4, 0x30, 0xCA, 0x06}, "ADMIN", false}
 };
 
-OledTextData oledTextData = { "", "", true, true, WHITE, WHITE };
+OledTextData oledTextData = { "", "", "", true, true, false, WHITE, WHITE, WHITE };
+
+char buffer[50];
 
 
 // ==== Function prototypes ===================================================
 // Manual prototypes are required for functions with default parameters. 
 // Arduino's auto-prototype generator doesn't handle those reliably.
+
 void oledPrintMessage(OledTextData &textData);
 void showMessage(String line1, String line2 = "");
+void rtcInit();
+DateTime getLocalTime();
+String getTimestamp(DateTime dt);
 
 // ============================================================================
 
@@ -112,12 +128,16 @@ void setup() {
   rfid.PCD_Init();   // initialize the RC522 reader chip
   delay(100);
 
+  // Initialize OLED
   Wire.begin(I2C_SDA, I2C_SCL);  // shared I2C bus for OLED + RTC
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
     Serial.println("OLED not found! Check wiring/address.");
     while (true); // halt here, nothing useful can happen without the display
   }
   Serial.println("OLED initialized");
+
+  // Initialize the RTC module
+  rtcInit();
 
   // Boot sequence messages
   Serial.println("PunchKit");
@@ -133,13 +153,15 @@ void setup() {
   Serial.println();
 
   Serial.println("RFID Scanner ready!");
-  oledTextData = { "SCANNER", "READY!", true, true, WHITE, SSD1306_INVERSE };
-  oledPrintMessage(oledTextData);
+  //oledTextData = { "SCANNER", "READY!", true, true, WHITE, SSD1306_INVERSE };
+  showMessage("SCANNER", "READY!");
 }
 
 // ============================================================================
 
 void loop() {
+  DateTime now = getLocalTime();
+
   if (!rfid.PICC_IsNewCardPresent()) {
     return;
   }
@@ -188,12 +210,18 @@ void loop() {
 
       if (employees[employeeIndex].isClockedIn) {
         Serial.print(employees[employeeIndex].name);
-        Serial.println(" clocked IN");
-        showMessage(employees[employeeIndex].name, "-IN-");
+        sprintf(buffer, " clocked IN (%02d:%02d:%02d)", now.hour(), now.minute(), now.second());
+        Serial.println(buffer);
+
+        oledTextData = { employees[employeeIndex].name, "-IN-", getTimestamp(now), true, true, false, WHITE, WHITE, WHITE };
+        oledPrintMessage(oledTextData);
       } else {
         Serial.print(employees[employeeIndex].name);
-        Serial.println(" clocked OUT");
-        showMessage(employees[employeeIndex].name, "-OUT-");
+        sprintf(buffer, " clocked OUT (%02d:%02d:%02d)", now.hour(), now.minute(), now.second());
+        Serial.println(buffer);
+
+        oledTextData = { employees[employeeIndex].name, "-OUT-", getTimestamp(now), true, true, false, WHITE, WHITE, WHITE };
+        oledPrintMessage(oledTextData);
       }
     }
   }

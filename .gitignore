@@ -10,3 +10,4 @@ build/
 
 # Editor/IDE folders
 .vscode/
+.idea/
