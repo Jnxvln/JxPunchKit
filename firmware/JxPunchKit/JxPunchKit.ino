@@ -66,15 +66,6 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 MFRC522 rfid(SS_PIN, RST_PIN);
 RTC_DS3231 rtc;
 
-// Returns true if the scanned UID matches the admin card
-bool isAdminCard(byte *scannedUid, byte uidLength) {
-  if (uidLength != 4) return false;
-  return (scannedUid[0] == ADMIN_UID_0 &&
-          scannedUid[1] == ADMIN_UID_1 &&
-          scannedUid[2] == ADMIN_UID_2 &&
-          scannedUid[3] == ADMIN_UID_3);
-}
-
 struct Employee {
   byte uid[4];       // 4-byte UID read from the fob
   String name;       // Employee display name
@@ -104,10 +95,11 @@ Employee employees[NUM_EMPLOYEES] = {
 
 OledTextData oledTextData = { "", "", "", true, true, false, WHITE, WHITE, WHITE };
 
+// A small buffer used for 'sprintf' with string interpolations
 char buffer[50];
 
 
-// ==== Function prototypes ===================================================
+// ==== FUNCTION PROTOTYPES ===================================================
 // Manual prototypes are required for functions with default parameters. 
 // Arduino's auto-prototype generator doesn't handle those reliably.
 
@@ -118,6 +110,8 @@ DateTime getLocalTime();
 String getTimestamp(DateTime dt);
 
 // ============================================================================
+
+// ================================================================================================================================
 
 
 void setup() {
@@ -142,19 +136,15 @@ void setup() {
   // Boot sequence messages
   Serial.println("PunchKit");
   showMessage("PunchKit");
-  delay(1000);
-
-  Serial.println("Checking RC522 connection...");
-  showMessage("Checking", "Reader..");
+  delay(2000);
 
   byte version = rfid.PCD_ReadRegister(rfid.VersionReg);
   Serial.print("RC522 firmware version: 0x");
   Serial.println(version, HEX);
   Serial.println();
 
-  Serial.println("RFID Scanner ready!");
-  //oledTextData = { "SCANNER", "READY!", true, true, WHITE, SSD1306_INVERSE };
-  showMessage("SCANNER", "READY!");
+  Serial.println("PunchKit Ready");
+  showMessage("PunchKit", "Ready");
 }
 
 // ============================================================================
@@ -172,42 +162,29 @@ void loop() {
 
   // Log the scanned UID as hex, useful for registering new fobs
   Serial.print("\nCard UID: ");
-  for (byte i = 0; i < rfid.uid.size; i++) {
-    Serial.print(rfid.uid.uidByte[i] < 0x10 ? " 0" : " ");
-    Serial.print(rfid.uid.uidByte[i], HEX);
-  }
+  printAsHexUID(rfid.uid, rfid.uid.size);
   Serial.println();
 
   if (isAdminCard(rfid.uid.uidByte, rfid.uid.size)) {
-    Serial.println("Admin card detected.");
-
-    tone(BUZZER_PIN, 2000);
-    delay(150);
-    noTone(BUZZER_PIN);
-
+    sfx_AdminDevice(BUZZER_PIN);
     showMessage("ADMIN", "DETECTED");
   } else {
     int employeeIndex = findEmployee(rfid.uid.uidByte, rfid.uid.size);
 
     if (employeeIndex == -1) {
-      // Unrecognized fob: three quick beeps
-      for (int i = 0; i < 3; i++) {
-        tone(BUZZER_PIN, 900);
-        delay(100);
-        noTone(BUZZER_PIN);
-        delay(100);
-      }
-
+      sfx_UnknownDevice(BUZZER_PIN);
       Serial.println("-Unknown Device-");
       showMessage("Unknown", "Device!");
     } else {
-      // Known employee: flip their clocked-in status
-      employees[employeeIndex].isClockedIn = !employees[employeeIndex].isClockedIn;
 
-      tone(BUZZER_PIN, 1000);
-      delay(150);
-      noTone(BUZZER_PIN);
+      Employee &employee = employees[employeeIndex];
 
+      // Toggle clocked-in/out, buzz to acknowledge
+      employee.isClockedIn = !employee.isClockedIn;    
+      sfx_KnownDevice(BUZZER_PIN);
+
+      // Display whether employee clocked IN or OUT
+      // TODO: Toggle clocked-in status using a Database rather than a hard-coded index of employees
       if (employees[employeeIndex].isClockedIn) {
         Serial.print(employees[employeeIndex].name);
         sprintf(buffer, " clocked IN (%02d:%02d:%02d)", now.hour(), now.minute(), now.second());
@@ -236,6 +213,8 @@ int findEmployee(byte *scannedUid, byte uidLength) {
 
   for (int i = 0; i < NUM_EMPLOYEES; i++) {
     bool match = true;
+
+    // Check if each employee's ID matches the scanned ID
     for (int j = 0; j < 4; j++) {
       if (employees[i].uid[j] != scannedUid[j]) {
         match = false;
@@ -245,4 +224,47 @@ int findEmployee(byte *scannedUid, byte uidLength) {
     if (match) return i;
   }
   return -1;
+}
+
+// Returns true if the scanned UID matches the admin card
+bool isAdminCard(byte *scannedUid, byte uidLength) {
+  if (uidLength != 4) return false;
+  return (scannedUid[0] == ADMIN_UID_0 &&
+          scannedUid[1] == ADMIN_UID_1 &&
+          scannedUid[2] == ADMIN_UID_2 &&
+          scannedUid[3] == ADMIN_UID_3);
+}
+
+// Prints out a given UID in Hex form
+void printAsHexUID(MFRC522::Uid uid, byte size) {
+  for (byte i = 0; i < size; i++) {
+    Serial.print(uid.uidByte[i] < 0x10 ? " 0" : " ");
+    Serial.print(uid.uidByte[i], HEX);
+  }
+}
+
+// Plays a sound for unknown fob/keycard
+void sfx_UnknownDevice(int buzzerPin) {
+  // Three quick beeps for unknown keycard or fob
+  for (int i = 0; i < 3; i++) {
+    tone(buzzerPin, 900);
+    delay(100);
+    noTone(buzzerPin);
+    delay(100);
+  }
+}
+
+// Plays a sound for known fob/keycard
+void sfx_KnownDevice(int buzzerPin) {
+  // One long beep for Known employee
+  tone(buzzerPin, 1000);
+  delay(150);
+  noTone(buzzerPin);
+}
+
+// Plays a sound for the 'Admin' fob/keycard
+void sfx_AdminDevice(int buzzerPin) {  
+  tone(buzzerPin, 2000);
+  delay(150);
+  noTone(buzzerPin);
 }
